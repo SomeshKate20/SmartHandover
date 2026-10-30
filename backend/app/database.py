@@ -2,7 +2,7 @@ from collections.abc import Generator
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -34,3 +34,12 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+def ensure_task_assignee_column() -> None:
+    with engine.begin() as connection:
+        if "tasks" not in inspect(connection).get_table_names():
+            return
+        columns = {column["name"] for column in inspect(connection).get_columns("tasks")}
+        if "assignee_clerk_id" not in columns:
+            connection.execute(text("ALTER TABLE tasks ADD COLUMN assignee_clerk_id VARCHAR(255)"))

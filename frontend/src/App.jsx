@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { SignInButton, UserButton, useAuth } from '@clerk/react'
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronRight, ClipboardList, LayoutDashboard, LoaderCircle, Menu, Plus, RefreshCw, Users, X } from 'lucide-react'
 import { apiRequest } from './services/api'
 
@@ -8,7 +9,16 @@ const date = (value) => value ? new Intl.DateTimeFormat('en', { day: 'numeric', 
 const overdue = (task) => task.status !== 'Completed' && task.due_date && task.due_date < today
 const Status = ({ value }) => <span className={`status ${value.toLowerCase().replaceAll(' ', '-')}`}>{value}</span>
 
-export default function App() {
+export default function App({ authEnabled = true }) {
+  return authEnabled ? <AuthenticatedWorkspace /> : <Workspace auth={null} authConfigured={false} />
+}
+
+function AuthenticatedWorkspace() {
+  const auth = useAuth()
+  return <Workspace auth={auth} authConfigured />
+}
+
+function Workspace({ auth, authConfigured }) {
   const [view, setView] = useState('dashboard')
   const [meetings, setMeetings] = useState([])
   const [tasks, setTasks] = useState([])
@@ -20,6 +30,7 @@ export default function App() {
   const [notice, setNotice] = useState('')
   const [analysis, setAnalysis] = useState(null)
   const [menu, setMenu] = useState(false)
+  const [taskActions, setTaskActions] = useState({})
 
   const load = async () => {
     setLoading(true); setError('')
@@ -28,9 +39,17 @@ export default function App() {
       setMeetings(meetingData); setTasks(taskData)
     } catch (err) { setError(err.message || 'Unable to load the workspace.') } finally { setLoading(false) }
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    if (!authConfigured || auth?.isLoaded) load()
+  }, [authConfigured, auth?.isLoaded, auth?.userId])
   const show = (next) => { setView(next); setMenu(false); setNotice('') }
   const metrics = useMemo(() => ({ meetings: meetings.length, open: tasks.filter((task) => task.status !== 'Completed').length, overdue: tasks.filter(overdue).length, completed: tasks.filter((task) => task.status === 'Completed').length }), [meetings, tasks])
+  const authenticatedRequest = async (path, options) => {
+    if (!auth?.isSignedIn) throw new Error('Sign in before claiming or updating a task.')
+    const token = await auth.getToken()
+    if (!token) throw new Error('Your sign-in session has expired. Sign in again.')
+    return apiRequest(path, options, token)
+  }
 
   const saveMeeting = async (event) => {
     event.preventDefault(); const form = new FormData(event.currentTarget)
@@ -46,6 +65,37 @@ export default function App() {
   }
   const patchTask = async (id, changes) => {
     try { const item = await apiRequest(`/api/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(changes) }); setTasks((items) => items.map((task) => task.id === id ? item : task)) } catch (err) { setError(err.message || 'Unable to update the task.') }
+  }
+  const updateTaskStatus = async (id, status) => {
+    const previousTask = tasks.find((task) => task.id === id)
+    if (!previousTask) return
+    setTasks((items) => items.map((task) => task.id === id ? { ...task, status } : task))
+    setTaskActions((actions) => ({ ...actions, [id]: true }))
+    setError('')
+    try {
+      const updatedTask = await authenticatedRequest(`/api/tasks/${id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      })
+      setTasks((items) => items.map((task) => task.id === id ? updatedTask : task))
+    } catch (err) {
+      setTasks((items) => items.map((task) => task.id === id ? { ...task, status: previousTask.status } : task))
+      setError(err.message || 'Unable to update the task status.')
+    } finally {
+      setTaskActions((actions) => ({ ...actions, [id]: false }))
+    }
+  }
+  const claimTask = async (id) => {
+    setTaskActions((actions) => ({ ...actions, [id]: true }))
+    setError('')
+    try {
+      const assignedTask = await authenticatedRequest(`/api/tasks/${id}/claim`, { method: 'POST' })
+      setTasks((items) => items.map((task) => task.id === id ? assignedTask : task))
+    } catch (err) {
+      setError(err.message || 'Unable to claim this task.')
+    } finally {
+      setTaskActions((actions) => ({ ...actions, [id]: false }))
+    }
   }
   const carryTask = async (id, meetingId) => {
     try { await apiRequest(`/api/tasks/${id}/carry-forward`, { method: 'POST', body: JSON.stringify({ meeting_id: Number(meetingId) }) }); setNotice('Task carried forward to the selected meeting.') } catch (err) { setError(err.message || 'Unable to carry the task forward.') }
@@ -71,9 +121,10 @@ export default function App() {
 
   return <div className="workspace">
     <aside className={menu ? 'sidebar open' : 'sidebar'}><div className="brand"><b>D</b> Digi<span>Plus</span><button className="close" onClick={() => setMenu(false)}><X size={19} /></button></div><nav><Nav icon={<LayoutDashboard />} label="Dashboard" active={view === 'dashboard'} onClick={() => show('dashboard')} /><Nav icon={<CalendarDays />} label="Meetings" active={view === 'meetings'} onClick={() => show('meetings')} /><Nav icon={<ClipboardList />} label="Tasks" active={view === 'tasks'} onClick={() => show('tasks')} /><Nav icon={<Users />} label="Knowledge" soon /><Nav icon={<ChevronRight />} label="Smart Handover" soon /></nav><div className="workspace-label">DIGIPLUS WORKSPACE<br /><small>Project command center</small></div></aside>
-    <main><header><button className="mobile-menu" onClick={() => setMenu(true)}><Menu size={22} /></button><div><p className="eyebrow">WORKSPACE OVERVIEW</p><h1>{view === 'dashboard' ? 'Good morning, team.' : view[0].toUpperCase() + view.slice(1)}</h1></div><button className="refresh" onClick={load} aria-label="Refresh"><RefreshCw className={loading ? 'spin' : ''} size={18} /></button></header>
+    <main><header><button className="mobile-menu" onClick={() => setMenu(true)}><Menu size={22} /></button><div><p className="eyebrow">WORKSPACE OVERVIEW</p><h1>{view === 'dashboard' ? 'Good morning, team.' : view[0].toUpperCase() + view.slice(1)}</h1></div>{authConfigured && auth?.isLoaded && (auth.isSignedIn ? <UserButton /> : <SignInButton mode="modal"><button className="light-button sign-in">Sign in to claim tasks</button></SignInButton>)}<button className="refresh" onClick={load} aria-label="Refresh"><RefreshCw className={loading ? 'spin' : ''} size={18} /></button></header>
+      {!authConfigured && <div className="auth-banner">Task assignment and status updates are disabled until Clerk is configured.</div>}
       {error && <Message type="error" text={error} onClose={() => setError('')} />}{notice && <Message type="success" text={notice} onClose={() => setNotice('')} />}
-      {loading ? <div className="loading"><LoaderCircle className="spin" /> Loading your workspace…</div> : view === 'dashboard' ? <Dashboard metrics={metrics} meetings={meetings} tasks={tasks} onShow={show} onMeeting={(meeting) => { setSelected(meeting); show('meetings') }} /> : view === 'meetings' ? <Meetings meetings={meetings} selected={selected} onSelect={setSelected} onSave={saveMeeting} saving={saving} analysis={analysis} onAnalyze={analyzeMeeting} onApprove={approveAnalysis} onDiscard={() => setAnalysis(null)} /> : <Tasks meetings={meetings} tasks={visibleTasks} filter={filter} onFilter={setFilter} onSave={saveTask} onPatch={patchTask} onCarry={carryTask} saving={saving} />}
+      {loading ? <div className="loading"><LoaderCircle className="spin" /> Loading your workspace…</div> : view === 'dashboard' ? <Dashboard metrics={metrics} meetings={meetings} tasks={tasks} onShow={show} onMeeting={(meeting) => { setSelected(meeting); show('meetings') }} /> : view === 'meetings' ? <Meetings meetings={meetings} selected={selected} onSelect={setSelected} onSave={saveMeeting} saving={saving} analysis={analysis} onAnalyze={analyzeMeeting} onApprove={approveAnalysis} onDiscard={() => setAnalysis(null)} /> : <Tasks meetings={meetings} tasks={visibleTasks} filter={filter} onFilter={setFilter} onSave={saveTask} onPatch={patchTask} onCarry={carryTask} onStatusChange={updateTaskStatus} onClaim={claimTask} currentUserId={auth?.userId} signedIn={Boolean(auth?.isSignedIn)} authConfigured={authConfigured} taskActions={taskActions} saving={saving} />}
     </main>
   </div>
 }
@@ -94,4 +145,86 @@ function Meetings({ meetings, selected, onSelect, onSave, saving, analysis, onAn
   return <section className="content-grid meetings"><article className="panel"><PanelTitle eyebrow="CAPTURE CONTEXT" title="New meeting" /><form className="form" onSubmit={onSave}><label>Title<input name="title" required placeholder="Weekly delivery sync" /></label><div className="split"><label>Type<input name="meeting_type" required defaultValue="Meeting" /></label><label>Date<input name="meeting_date" type="date" defaultValue={today} required /></label></div><label>Agenda<textarea name="agenda" required rows="2" placeholder="What needs to be covered?" /></label><label>Participants <em>comma-separated</em><input name="participants" placeholder="Asha, Dev, Priya" /></label><label>Raw notes<textarea name="raw_notes" required rows="5" placeholder="Capture discussion, decisions and follow-ups…" /></label><button className="primary" disabled={saving}><Plus size={17} /> {saving ? 'Saving…' : 'Save meeting'}</button></form></article><article className="panel"><PanelTitle eyebrow="MEETING HISTORY" title={`All meetings · ${meetings.length}`} />{meetings.length ? <div className="list all-meetings">{meetings.map((meeting) => <button className={`meeting-row ${selected?.id === meeting.id ? 'selected' : ''}`} key={meeting.id} onClick={() => { onSelect(meeting); onDiscard() }}><DateTile value={meeting.meeting_date} /><span><strong>{meeting.title}</strong><small>{meeting.agenda}</small></span><ChevronRight size={17} /></button>)}</div> : <Empty label="Meetings you save will appear here." />}{selected && <article className="detail"><p className="eyebrow">SELECTED MEETING</p><h3>{selected.title}</h3><p>{selected.raw_notes}</p><small><Users size={14} /> {selected.participants.join(', ') || 'No participants'} · {date(selected.meeting_date)}</small><button className="primary ai-button" onClick={onAnalyze} disabled={saving}>{saving ? 'Analyzing…' : 'Analyze notes with AI'}</button>{analysis && <div className="ai-review"><p className="eyebrow">REVIEW BEFORE SAVING</p><h3>AI meeting analysis</h3><p>{analysis.summary}</p><strong>Decisions</strong><ul>{analysis.decisions.length ? analysis.decisions.map((item) => <li key={item}>{item}</li>) : <li>None identified</li>}</ul><strong>Action items</strong><ul>{analysis.action_items.length ? analysis.action_items.map((item) => <li key={item.title}>{item.title} — {item.owner || 'Unassigned'}{item.due_date ? `, due ${date(item.due_date)}` : ''}</li>) : <li>None identified</li>}</ul>{analysis.blockers.length > 0 && <><strong>Blockers</strong><ul>{analysis.blockers.map((item) => <li key={item}>{item}</li>)}</ul></>}<div className="review-actions"><button className="primary" onClick={onApprove} disabled={saving}>Approve and save</button><button className="link" onClick={onDiscard}>Discard</button></div></div>}</article>}</article></section>
 }
 
-function Tasks({ meetings, tasks, filter, onFilter, onSave, onPatch, onCarry, saving }) { return <section className="content-grid tasks"><article className="panel"><PanelTitle eyebrow="MAKE WORK VISIBLE" title="New task" /><form className="form" onSubmit={onSave}><label>Task title<input name="title" required placeholder="Prepare release notes" /></label><label>Description <em>optional</em><textarea name="description" rows="3" placeholder="Add useful context…" /></label><div className="split"><label>Owner<input name="owner" placeholder="Name" /></label><label>Due date<input name="due_date" type="date" /></label></div><label>Origin meeting <em>optional</em><select name="origin_meeting_id"><option value="">No linked meeting</option>{meetings.map((meeting) => <option key={meeting.id} value={meeting.id}>{meeting.title}</option>)}</select></label><button className="primary" disabled={saving}><Plus size={17} /> {saving ? 'Saving…' : 'Create task'}</button></form></article><article className="panel"><div className="panel-title"><div><p className="eyebrow">WORKFLOW</p><h2>Tasks</h2></div><select className="filter" value={filter} onChange={(event) => onFilter(event.target.value)}><option>All</option>{statuses.map((item) => <option key={item}>{item}</option>)}</select></div>{tasks.length ? <div className="task-list">{tasks.map((task) => <article className="task" key={task.id}><div className="task-top"><div><h3>{task.title}</h3>{task.description && <p>{task.description}</p>}</div><Status value={task.status} /></div><div className="task-fields"><label>Owner<input defaultValue={task.owner || ''} placeholder="Unassigned" onBlur={(event) => (task.owner || '') !== event.target.value && onPatch(task.id, { owner: event.target.value || null })} /></label><label>Due date<input type="date" defaultValue={task.due_date || ''} onBlur={(event) => (task.due_date || '') !== event.target.value && onPatch(task.id, { due_date: event.target.value || null })} /></label><label>Status<select value={task.status} onChange={(event) => onPatch(task.id, { status: event.target.value })}>{statuses.map((item) => <option key={item}>{item}</option>)}</select></label></div>{task.status === 'Completed' && <label className="completion">Completion outcome<input defaultValue={task.completion_note || ''} placeholder="What was delivered?" onBlur={(event) => (task.completion_note || '') !== event.target.value && onPatch(task.id, { completion_note: event.target.value || null })} /></label>}{task.status !== 'Completed' && meetings.length > 0 && <label className="completion">Carry forward<select defaultValue="" onChange={(event) => { if (event.target.value) { onCarry(task.id, event.target.value); event.target.value = '' } }}><option value="">Select a meeting…</option>{meetings.map((meeting) => <option key={meeting.id} value={meeting.id}>{meeting.title}</option>)}</select></label>}{task.origin_meeting_id && <small className="origin">Linked to meeting #{task.origin_meeting_id}</small>}</article>)}</div> : <Empty label="No tasks match this view." />}</article></section> }
+function Tasks({
+  meetings,
+  tasks,
+  filter,
+  onFilter,
+  onSave,
+  onPatch,
+  onCarry,
+  onStatusChange,
+  onClaim,
+  currentUserId,
+  signedIn,
+  authConfigured,
+  taskActions,
+  saving,
+}) {
+  return <section className="content-grid tasks">
+    <article className="panel">
+      <PanelTitle eyebrow="MAKE WORK VISIBLE" title="New task" />
+      <form className="form" onSubmit={onSave}>
+        <label>Task title<input name="title" required placeholder="Prepare release notes" /></label>
+        <label>Description <em>optional</em><textarea name="description" rows="3" placeholder="Add useful context…" /></label>
+        <div className="split">
+          <label>Owner<input name="owner" placeholder="Name (display only)" /></label>
+          <label>Due date<input name="due_date" type="date" /></label>
+        </div>
+        <label>Origin meeting <em>optional</em>
+          <select name="origin_meeting_id">
+            <option value="">No linked meeting</option>
+            {meetings.map((meeting) => <option key={meeting.id} value={meeting.id}>{meeting.title}</option>)}
+          </select>
+        </label>
+        <button className="primary" disabled={saving}><Plus size={17} /> {saving ? 'Saving…' : 'Create task'}</button>
+      </form>
+    </article>
+    <article className="panel">
+      <div className="panel-title">
+        <div><p className="eyebrow">WORKFLOW</p><h2>Tasks</h2></div>
+        <select className="filter" value={filter} onChange={(event) => onFilter(event.target.value)}>
+          <option>All</option>
+          {statuses.map((item) => <option key={item}>{item}</option>)}
+        </select>
+      </div>
+      {tasks.length ? <div className="task-list">{tasks.map((task) => {
+        const busy = Boolean(taskActions[task.id])
+        const canUpdateStatus = signedIn && task.assignee_clerk_id === currentUserId
+        return <article className="task" key={task.id}>
+          <div className="task-top">
+            <div><h3>{task.title}</h3>{task.description && <p>{task.description}</p>}</div>
+            <Status value={task.status} />
+          </div>
+          <div className="task-fields">
+            <label>Owner<input defaultValue={task.owner || ''} placeholder="Unassigned" onBlur={(event) => (task.owner || '') !== event.target.value && onPatch(task.id, { owner: event.target.value || null })} /></label>
+            <label>Due date<input type="date" defaultValue={task.due_date || ''} onBlur={(event) => (task.due_date || '') !== event.target.value && onPatch(task.id, { due_date: event.target.value || null })} /></label>
+            <label>Status
+              <select
+                value={task.status}
+                disabled={!canUpdateStatus || busy}
+                onChange={(event) => onStatusChange(task.id, event.target.value)}
+              >
+                {statuses.map((item) => <option key={item}>{item}</option>)}
+              </select>
+            </label>
+          </div>
+          {busy && <small className="origin">Saving task assignment/status…</small>}
+          {task.assignee_clerk_id
+            ? <small className="origin">{canUpdateStatus ? 'Assigned to you' : 'Assigned to another account'}</small>
+            : signedIn
+              ? <button className="link claim-task" disabled={busy} onClick={() => onClaim(task.id)}>Claim this task</button>
+              : <small className="origin">{authConfigured ? 'Sign in to claim this task.' : 'Sign-in is not configured.'}</small>}
+          {task.status === 'Completed' && <label className="completion">Completion outcome<input defaultValue={task.completion_note || ''} placeholder="What was delivered?" onBlur={(event) => (task.completion_note || '') !== event.target.value && onPatch(task.id, { completion_note: event.target.value || null })} /></label>}
+          {task.status !== 'Completed' && meetings.length > 0 && <label className="completion">Carry forward
+            <select defaultValue="" onChange={(event) => { if (event.target.value) { onCarry(task.id, event.target.value); event.target.value = '' } }}>
+              <option value="">Select a meeting…</option>
+              {meetings.map((meeting) => <option key={meeting.id} value={meeting.id}>{meeting.title}</option>)}
+            </select>
+          </label>}
+          {task.origin_meeting_id && <small className="origin">Linked to meeting #{task.origin_meeting_id}</small>}
+        </article>
+      })}</div> : <Empty label="No tasks match this view." />}
+    </article>
+  </section>
+}

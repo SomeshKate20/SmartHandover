@@ -7,12 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
-from .database import Base, engine
+from .database import Base, engine, ensure_task_assignee_column
 from .routes import ai, meetings, tasks
 
 
 LOCAL_CORS_ORIGINS = {"http://localhost:5173", "http://127.0.0.1:5173"}
 DEPLOYED_CORS_ORIGINS = {
+    "https://smart-handover-3a40vay71-someshs-projects-93b80e84.vercel.app",
     "https://smart-handover-c6rb91ol3-someshs-projects-93b80e84.vercel.app",
     "https://smart-handover-dgder7wvt-someshs-projects-93b80e84.vercel.app",
 }
@@ -29,6 +30,7 @@ def cors_origins() -> list[str]:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
+    ensure_task_assignee_column()
     yield
 
 

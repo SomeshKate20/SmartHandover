@@ -52,6 +52,17 @@ Set these Render environment variables:
 - `GROQ_API_KEY`: required for `/api/ai/process-notes`; set this secret in
   Render's environment settings. Never commit the key.
 - `GROQ_MODEL`: optional model selection, default `openai/gpt-oss-20b`.
+- `CLERK_ISSUER`: the Clerk Frontend API issuer URL.
+- `CLERK_JWKS_URL`: the matching Clerk Frontend API JWKS URL, ending in
+  `/.well-known/jwks.json`.
+- `CLERK_AUTHORIZED_PARTIES`: comma-separated exact browser origins authorized
+  to use Clerk tokens, including the production Vercel origin and local
+  `http://localhost:5173`.
+
+Task status changes require a verified Clerk session. Legacy task owner names
+remain display-only and are not treated as authenticated assignments;
+authenticated users can claim unassigned tasks. No administrator role is
+configured.
 
 Render provides `PORT`; the start command binds Uvicorn to `0.0.0.0:$PORT`.
 Database tables are created during application startup.
@@ -71,6 +82,8 @@ Set this Vercel environment variable for Production (and Preview if desired):
 
 - `VITE_API_BASE_URL`: the public Render URL, for example
   `https://digiplus-api.onrender.com`
+- `VITE_CLERK_PUBLISHABLE_KEY`: the Clerk publishable key for the same Clerk
+  instance configured on Render. This is a public frontend key, not a secret.
 
 Vite exposes only variables prefixed with `VITE_`; do not put AI keys or other
 secrets in Vercel frontend variables. The frontend API client rejects

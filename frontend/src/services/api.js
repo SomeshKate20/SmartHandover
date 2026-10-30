@@ -17,7 +17,7 @@ export const API_BASE_URL = configuredApiBaseUrl
  * Makes a request to the configured backend. Production deployments must set
  * VITE_API_BASE_URL to the Render service URL at build time.
  */
-export async function apiRequest(path, options = {}) {
+export async function apiRequest(path, options = {}, accessToken = null) {
   if (!API_BASE_URL) {
     throw new Error('VITE_API_BASE_URL must be set for production builds.')
   }
@@ -26,6 +26,7 @@ export async function apiRequest(path, options = {}) {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...options.headers,
     },
   })

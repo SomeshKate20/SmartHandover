@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..auth import AuthenticatedUser, get_current_user
 from ..models import Meeting, MeetingTask, Task, TaskHistory
-from ..schemas import CarryForwardRequest, TaskCreate, TaskHistoryResponse, TaskResponse, TaskStatus, TaskUpdate
+from ..schemas import CarryForwardRequest, TaskCreate, TaskHistoryResponse, TaskResponse, TaskStatus, TaskStatusUpdate, TaskUpdate
 
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -67,19 +68,64 @@ def update_task(task_id: int, payload: TaskUpdate, db: Session = Depends(get_db)
     changes = payload.model_dump(exclude_unset=True)
     if "origin_meeting_id" in changes:
         validate_origin_meeting(changes["origin_meeting_id"], db)
-    previous_owner, previous_status = task.owner, task.status
+    previous_owner = task.owner
     for field, value in changes.items():
         if isinstance(value, str):
             value = value.strip() or None
         setattr(task, field, value)
     if "owner" in changes and task.owner != previous_owner:
         record_history(db, task.id, "owner_assigned" if not previous_owner else "owner_changed", f"Owner changed from {previous_owner or 'unassigned'} to {task.owner or 'unassigned'}")
-    if "status" in changes and task.status != previous_status:
-        record_history(db, task.id, "status_changed", f"Status changed from {previous_status} to {task.status}")
     if "completion_note" in changes and task.completion_note:
         record_history(db, task.id, "completion_outcome_recorded", "Completion outcome recorded")
     db.commit()
     db.refresh(task)
+    return task
+
+
+@router.patch("/{task_id}/status", response_model=TaskResponse)
+def update_task_status(
+    task_id: int,
+    payload: TaskStatusUpdate,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Task:
+    task = get_task_or_404(task_id, db)
+    if task.assignee_clerk_id != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Only the assigned user can update this task's status")
+
+    previous_status = task.status
+    task.status = payload.status
+    if task.status != previous_status:
+        record_history(db, task.id, "status_changed", f"Status changed from {previous_status} to {task.status}")
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+@router.post("/{task_id}/claim", response_model=TaskResponse)
+def claim_task(
+    task_id: int,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Task:
+    task = get_task_or_404(task_id, db)
+    if task.assignee_clerk_id is not None and task.assignee_clerk_id != user.clerk_id:
+        raise HTTPException(status_code=409, detail="Task is already assigned")
+    if task.assignee_clerk_id is None:
+        result = db.execute(
+            update(Task)
+            .where(Task.id == task_id, Task.assignee_clerk_id.is_(None))
+            .values(assignee_clerk_id=user.clerk_id)
+        )
+        if result.rowcount:
+            record_history(db, task.id, "task_claimed", "Task assigned to an authenticated user")
+            db.commit()
+        else:
+            db.rollback()
+            task = get_task_or_404(task_id, db)
+            if task.assignee_clerk_id != user.clerk_id:
+                raise HTTPException(status_code=409, detail="Task is already assigned")
+        db.refresh(task)
     return task
 
 
