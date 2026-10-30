@@ -12,12 +12,17 @@ from .routes import ai, meetings, tasks
 
 
 LOCAL_CORS_ORIGINS = {"http://localhost:5173", "http://127.0.0.1:5173"}
+DEPLOYED_CORS_ORIGINS = {
+    "https://smart-handover-dgder7wvt-someshs-projects-93b80e84.vercel.app",
+}
+ALLOWED_CORS_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+ALLOWED_CORS_HEADERS = ["Content-Type", "Authorization"]
 
 
 def cors_origins() -> list[str]:
     configured_origins = os.getenv("CORS_ORIGINS", "")
     deployed_origins = {origin.strip().rstrip("/") for origin in configured_origins.split(",") if origin.strip()}
-    return sorted(LOCAL_CORS_ORIGINS | deployed_origins)
+    return sorted(LOCAL_CORS_ORIGINS | DEPLOYED_CORS_ORIGINS | deployed_origins)
 
 
 @asynccontextmanager
@@ -40,9 +45,9 @@ app.include_router(ai.router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins(),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=False,
+    allow_methods=ALLOWED_CORS_METHODS,
+    allow_headers=ALLOWED_CORS_HEADERS,
 )
 
 
