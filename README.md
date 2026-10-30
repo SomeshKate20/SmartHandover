@@ -49,8 +49,9 @@ Set these Render environment variables:
 - `DATABASE_URL`: use `sqlite:////var/data/digiplus.db` when a persistent
   disk is mounted at `/var/data`; otherwise the blueprint's
   `sqlite:///./digiplus.db` default is writable but ephemeral.
-- `OPENAI_API_KEY`: set only when the later AI workflow is enabled.
-- `OPENAI_MODEL`: optional model selection, default `gpt-4.1-mini`.
+- `GROQ_API_KEY`: required for `/api/ai/process-notes`; set this secret in
+  Render's environment settings. Never commit the key.
+- `GROQ_MODEL`: optional model selection, default `openai/gpt-oss-20b`.
 
 Render provides `PORT`; the start command binds Uvicorn to `0.0.0.0:$PORT`.
 Database tables are created during application startup.
