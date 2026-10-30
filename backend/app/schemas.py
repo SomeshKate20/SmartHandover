@@ -154,14 +154,21 @@ class KnowledgeArticleUpdate(BaseModel):
     visibility: KnowledgeVisibility | None = None
     related_meeting_id: int | None = None
 
-    @field_validator("title", "content", "category")
+    @field_validator("title", "content", "category", mode="before")
     @classmethod
-    def trim_optional_text(cls, value: str | None) -> str | None:
+    def trim_optional_text(cls, value: str) -> str:
         if value is None:
-            return None
+            raise ValueError("This field must not be null")
         value = value.strip()
         if not value:
             raise ValueError("This field must not be blank")
+        return value
+
+    @field_validator("visibility", mode="before")
+    @classmethod
+    def require_visibility(cls, value: str) -> str:
+        if value is None:
+            raise ValueError("Visibility must not be null")
         return value
 
     @field_validator("tags")
