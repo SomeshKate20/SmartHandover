@@ -90,3 +90,24 @@ class TaskResponse(BaseModel):
     completion_note: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class NotesProcessRequest(BaseModel):
+    raw_notes: str = Field(min_length=1)
+    meeting_date: date | None = None
+    participants: list[str] = Field(default_factory=list)
+
+
+class AiActionItem(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: str | None = None
+    owner: str | None = Field(default=None, max_length=120)
+    due_date: date | None = None
+    blocker: str | None = None
+
+
+class AiMeetingAnalysis(BaseModel):
+    summary: str = Field(min_length=1)
+    decisions: list[str] = Field(default_factory=list)
+    action_items: list[AiActionItem] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)

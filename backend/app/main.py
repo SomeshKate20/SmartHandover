@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 
 from .database import Base, engine
-from .routes import meetings, tasks
+from .routes import ai, meetings, tasks
 
 
 LOCAL_CORS_ORIGINS = {"http://localhost:5173", "http://127.0.0.1:5173"}
@@ -35,6 +35,7 @@ app = FastAPI(
 
 app.include_router(meetings.router)
 app.include_router(tasks.router)
+app.include_router(ai.router)
 
 app.add_middleware(
     CORSMiddleware,
