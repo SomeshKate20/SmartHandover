@@ -1,12 +1,27 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from .database import Base, engine
+from .routes import meetings, tasks
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    yield
 
 
 app = FastAPI(
     title="DigiPlus API",
     version="0.1.0",
     description="AI-powered knowledge and task management API.",
+    lifespan=lifespan,
 )
+
+app.include_router(meetings.router)
+app.include_router(tasks.router)
 
 app.add_middleware(
     CORSMiddleware,
