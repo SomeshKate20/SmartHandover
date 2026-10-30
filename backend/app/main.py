@@ -8,11 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 
 from .database import Base, engine, ensure_task_assignee_column
-from .routes import ai, meetings, tasks
+from .routes import ai, knowledge, meetings, tasks
 
 
 LOCAL_CORS_ORIGINS = {"http://localhost:5173", "http://127.0.0.1:5173"}
 DEPLOYED_CORS_ORIGINS = {
+    "https://smart-handover.vercel.app",
     "https://smart-handover-3a40vay71-someshs-projects-93b80e84.vercel.app",
     "https://smart-handover-c6rb91ol3-someshs-projects-93b80e84.vercel.app",
     "https://smart-handover-dgder7wvt-someshs-projects-93b80e84.vercel.app",
@@ -44,6 +45,7 @@ app = FastAPI(
 app.include_router(meetings.router)
 app.include_router(tasks.router)
 app.include_router(ai.router)
+app.include_router(knowledge.router)
 
 app.add_middleware(
     CORSMiddleware,
