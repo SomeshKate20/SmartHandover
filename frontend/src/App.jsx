@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { SignInButton, UserButton, useAuth } from '@clerk/react'
-import { AlertCircle, CalendarDays, CheckCircle2, ChevronRight, ClipboardList, LayoutDashboard, LoaderCircle, Menu, Plus, RefreshCw, Users, X } from 'lucide-react'
+import { AlertCircle, BookOpen, CalendarDays, CheckCircle2, ChevronRight, ClipboardList, LayoutDashboard, LoaderCircle, Menu, Plus, RefreshCw, Users, X } from 'lucide-react'
 import { apiRequest } from './services/api'
 
 const statuses = ['Open', 'In Progress', 'Blocked', 'Completed']
@@ -31,6 +31,14 @@ function Workspace({ auth, authConfigured }) {
   const [analysis, setAnalysis] = useState(null)
   const [menu, setMenu] = useState(false)
   const [taskActions, setTaskActions] = useState({})
+  const [knowledgeArticles, setKnowledgeArticles] = useState([])
+  const [selectedKnowledge, setSelectedKnowledge] = useState(null)
+  const [knowledgeDraft, setKnowledgeDraft] = useState(null)
+  const [knowledgeQuery, setKnowledgeQuery] = useState('')
+  const [knowledgeCategory, setKnowledgeCategory] = useState('')
+  const [knowledgeTag, setKnowledgeTag] = useState('')
+  const [knowledgeLoading, setKnowledgeLoading] = useState(false)
+  const knowledgeRequestId = useRef(0)
 
   const load = async () => {
     setLoading(true); setError('')
@@ -50,6 +58,43 @@ function Workspace({ auth, authConfigured }) {
     if (!token) throw new Error('Your sign-in session has expired. Sign in again.')
     return apiRequest(path, options, token)
   }
+  const loadKnowledge = async () => {
+    const requestId = ++knowledgeRequestId.current
+    setKnowledgeLoading(true)
+    setError('')
+    try {
+      const params = new URLSearchParams()
+      if (knowledgeQuery.trim()) params.set('q', knowledgeQuery.trim())
+      if (knowledgeCategory.trim()) params.set('category', knowledgeCategory.trim())
+      if (knowledgeTag.trim()) params.set('tag', knowledgeTag.trim())
+      const queryString = params.toString()
+      const suffix = queryString ? `?${queryString}` : ''
+      const articles = await authenticatedRequest(`/api/knowledge${suffix}`)
+      if (requestId !== knowledgeRequestId.current) return
+      setKnowledgeArticles(articles)
+      setSelectedKnowledge((current) => current
+        ? articles.find((article) => article.id === current.id) || current
+        : null)
+    } catch (err) {
+      if (requestId === knowledgeRequestId.current) {
+        setError(err.message || 'Unable to load knowledge articles.')
+      }
+    } finally {
+      if (requestId === knowledgeRequestId.current) setKnowledgeLoading(false)
+    }
+  }
+  useEffect(() => {
+    if (view !== 'knowledge') return
+    if (!auth?.isSignedIn) {
+      setKnowledgeArticles([])
+      return
+    }
+    const timer = setTimeout(loadKnowledge, 250)
+    return () => {
+      clearTimeout(timer)
+      knowledgeRequestId.current += 1
+    }
+  }, [view, auth?.isSignedIn, knowledgeQuery, knowledgeCategory, knowledgeTag])
 
   const saveMeeting = async (event) => {
     event.preventDefault(); const form = new FormData(event.currentTarget)
@@ -97,6 +142,64 @@ function Workspace({ auth, authConfigured }) {
       setTaskActions((actions) => ({ ...actions, [id]: false }))
     }
   }
+  const startKnowledgeDraft = (article = null) => {
+    setSelectedKnowledge(article)
+    setKnowledgeDraft(article
+      ? { ...article, tags: article.tags.join(', ') }
+      : { title: '', content: '', category: 'General', tags: '', visibility: 'private', related_meeting_id: '' })
+  }
+  const createKnowledgeFromMeeting = (meeting, analysis) => {
+    const content = analysis?.summary || meeting.summary || meeting.raw_notes
+    startKnowledgeDraft({
+      title: `${meeting.title} — Knowledge`,
+      content,
+      category: 'Meeting',
+      tags: '',
+      visibility: 'private',
+      related_meeting_id: meeting.id,
+    })
+    show('knowledge')
+  }
+  const saveKnowledge = async (event) => {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    const meetingId = form.get('related_meeting_id')
+    const isEditing = Boolean(knowledgeDraft.id)
+    const payload = {
+      title: form.get('title'),
+      content: form.get('content'),
+      category: form.get('category'),
+      tags: form.get('tags').split(',').map((tag) => tag.trim()).filter(Boolean),
+      visibility: form.get('visibility'),
+      related_meeting_id: meetingId ? Number(meetingId) : null,
+    }
+    setSaving(true)
+    setError('')
+    try {
+      const article = isEditing
+        ? await authenticatedRequest(`/api/knowledge/${knowledgeDraft.id}`, { method: 'PATCH', body: JSON.stringify(payload) })
+        : await authenticatedRequest('/api/knowledge', { method: 'POST', body: JSON.stringify(payload) })
+      setSelectedKnowledge(article)
+      setKnowledgeDraft(null)
+      await loadKnowledge()
+      setNotice(isEditing ? 'Knowledge article updated.' : 'Knowledge article saved.')
+    } catch (err) {
+      setError(err.message || 'Unable to save the knowledge article.')
+    } finally {
+      setSaving(false)
+    }
+  }
+  const deleteKnowledge = async (article) => {
+    if (!window.confirm(`Delete "${article.title}"? This cannot be undone.`)) return
+    try {
+      await authenticatedRequest(`/api/knowledge/${article.id}`, { method: 'DELETE' })
+      setKnowledgeArticles((items) => items.filter((item) => item.id !== article.id))
+      setSelectedKnowledge(null)
+      setNotice('Knowledge article deleted.')
+    } catch (err) {
+      setError(err.message || 'Unable to delete the knowledge article.')
+    }
+  }
   const carryTask = async (id, meetingId) => {
     try { await apiRequest(`/api/tasks/${id}/carry-forward`, { method: 'POST', body: JSON.stringify({ meeting_id: Number(meetingId) }) }); setNotice('Task carried forward to the selected meeting.') } catch (err) { setError(err.message || 'Unable to carry the task forward.') }
   }
@@ -120,11 +223,11 @@ function Workspace({ auth, authConfigured }) {
   const visibleTasks = filter === 'All' ? tasks : tasks.filter((task) => task.status === filter)
 
   return <div className="workspace">
-    <aside className={menu ? 'sidebar open' : 'sidebar'}><div className="brand"><b>D</b> Digi<span>Plus</span><button className="close" onClick={() => setMenu(false)}><X size={19} /></button></div><nav><Nav icon={<LayoutDashboard />} label="Dashboard" active={view === 'dashboard'} onClick={() => show('dashboard')} /><Nav icon={<CalendarDays />} label="Meetings" active={view === 'meetings'} onClick={() => show('meetings')} /><Nav icon={<ClipboardList />} label="Tasks" active={view === 'tasks'} onClick={() => show('tasks')} /><Nav icon={<Users />} label="Knowledge" soon /><Nav icon={<ChevronRight />} label="Smart Handover" soon /></nav><div className="workspace-label">DIGIPLUS WORKSPACE<br /><small>Project command center</small></div></aside>
+    <aside className={menu ? 'sidebar open' : 'sidebar'}><div className="brand"><b>D</b> Digi<span>Plus</span><button className="close" onClick={() => setMenu(false)}><X size={19} /></button></div><nav><Nav icon={<LayoutDashboard />} label="Dashboard" active={view === 'dashboard'} onClick={() => show('dashboard')} /><Nav icon={<CalendarDays />} label="Meetings" active={view === 'meetings'} onClick={() => show('meetings')} /><Nav icon={<ClipboardList />} label="Tasks" active={view === 'tasks'} onClick={() => show('tasks')} /><Nav icon={<BookOpen />} label="Knowledge" active={view === 'knowledge'} onClick={() => show('knowledge')} /><Nav icon={<ChevronRight />} label="Smart Handover" soon /></nav><div className="workspace-label">DIGIPLUS WORKSPACE<br /><small>Project command center</small></div></aside>
     <main><header><button className="mobile-menu" onClick={() => setMenu(true)}><Menu size={22} /></button><div><p className="eyebrow">WORKSPACE OVERVIEW</p><h1>{view === 'dashboard' ? 'Good morning, team.' : view[0].toUpperCase() + view.slice(1)}</h1></div>{authConfigured && auth?.isLoaded && (auth.isSignedIn ? <UserButton /> : <SignInButton mode="modal"><button className="light-button sign-in">Sign in to claim tasks</button></SignInButton>)}<button className="refresh" onClick={load} aria-label="Refresh"><RefreshCw className={loading ? 'spin' : ''} size={18} /></button></header>
       {!authConfigured && <div className="auth-banner">Task assignment and status updates are disabled until Clerk is configured.</div>}
       {error && <Message type="error" text={error} onClose={() => setError('')} />}{notice && <Message type="success" text={notice} onClose={() => setNotice('')} />}
-      {loading ? <div className="loading"><LoaderCircle className="spin" /> Loading your workspace…</div> : view === 'dashboard' ? <Dashboard metrics={metrics} meetings={meetings} tasks={tasks} onShow={show} onMeeting={(meeting) => { setSelected(meeting); show('meetings') }} /> : view === 'meetings' ? <Meetings meetings={meetings} selected={selected} onSelect={setSelected} onSave={saveMeeting} saving={saving} analysis={analysis} onAnalyze={analyzeMeeting} onApprove={approveAnalysis} onDiscard={() => setAnalysis(null)} /> : <Tasks meetings={meetings} tasks={visibleTasks} filter={filter} onFilter={setFilter} onSave={saveTask} onPatch={patchTask} onCarry={carryTask} onStatusChange={updateTaskStatus} onClaim={claimTask} currentUserId={auth?.userId} signedIn={Boolean(auth?.isSignedIn)} authConfigured={authConfigured} taskActions={taskActions} saving={saving} />}
+      {loading ? <div className="loading"><LoaderCircle className="spin" /> Loading your workspace…</div> : view === 'dashboard' ? <Dashboard metrics={metrics} meetings={meetings} tasks={tasks} onShow={show} onMeeting={(meeting) => { setSelected(meeting); show('meetings') }} /> : view === 'meetings' ? <Meetings meetings={meetings} selected={selected} onSelect={setSelected} onSave={saveMeeting} saving={saving} analysis={analysis} onAnalyze={analyzeMeeting} onApprove={approveAnalysis} onDiscard={() => setAnalysis(null)} onCreateKnowledge={createKnowledgeFromMeeting} /> : view === 'knowledge' ? <KnowledgePage articles={knowledgeArticles} selected={selectedKnowledge} draft={knowledgeDraft} meetings={meetings} loading={knowledgeLoading} query={knowledgeQuery} category={knowledgeCategory} tag={knowledgeTag} currentUserId={auth?.userId} signedIn={Boolean(auth?.isSignedIn)} authConfigured={authConfigured} saving={saving} onQuery={setKnowledgeQuery} onCategory={setKnowledgeCategory} onTag={setKnowledgeTag} onCreate={() => startKnowledgeDraft()} onSelect={(article) => { setKnowledgeDraft(null); setSelectedKnowledge(article) }} onEdit={startKnowledgeDraft} onDelete={deleteKnowledge} onSave={saveKnowledge} onCancel={() => setKnowledgeDraft(null)} onMeeting={(meetingId) => { const meeting = meetings.find((item) => item.id === meetingId); if (meeting) { setSelected(meeting); show('meetings') } }} /> : <Tasks meetings={meetings} tasks={visibleTasks} filter={filter} onFilter={setFilter} onSave={saveTask} onPatch={patchTask} onCarry={carryTask} onStatusChange={updateTaskStatus} onClaim={claimTask} currentUserId={auth?.userId} signedIn={Boolean(auth?.isSignedIn)} authConfigured={authConfigured} taskActions={taskActions} saving={saving} />}
     </main>
   </div>
 }
@@ -141,8 +244,113 @@ function Dashboard({ metrics, meetings, tasks, onShow, onMeeting }) {
 function PanelTitle({ eyebrow, title, button, onClick }) { return <div className="panel-title"><div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2></div>{button && <button className="link" onClick={onClick}>{button} <ChevronRight size={16} /></button>}</div> }
 function DateTile({ value }) { const item = new Date(`${value}T12:00:00`); return <span className="date-tile"><b>{item.getDate()}</b><small>{new Intl.DateTimeFormat('en', { month: 'short' }).format(item)}</small></span> }
 
-function Meetings({ meetings, selected, onSelect, onSave, saving, analysis, onAnalyze, onApprove, onDiscard }) {
-  return <section className="content-grid meetings"><article className="panel"><PanelTitle eyebrow="CAPTURE CONTEXT" title="New meeting" /><form className="form" onSubmit={onSave}><label>Title<input name="title" required placeholder="Weekly delivery sync" /></label><div className="split"><label>Type<input name="meeting_type" required defaultValue="Meeting" /></label><label>Date<input name="meeting_date" type="date" defaultValue={today} required /></label></div><label>Agenda<textarea name="agenda" required rows="2" placeholder="What needs to be covered?" /></label><label>Participants <em>comma-separated</em><input name="participants" placeholder="Asha, Dev, Priya" /></label><label>Raw notes<textarea name="raw_notes" required rows="5" placeholder="Capture discussion, decisions and follow-ups…" /></label><button className="primary" disabled={saving}><Plus size={17} /> {saving ? 'Saving…' : 'Save meeting'}</button></form></article><article className="panel"><PanelTitle eyebrow="MEETING HISTORY" title={`All meetings · ${meetings.length}`} />{meetings.length ? <div className="list all-meetings">{meetings.map((meeting) => <button className={`meeting-row ${selected?.id === meeting.id ? 'selected' : ''}`} key={meeting.id} onClick={() => { onSelect(meeting); onDiscard() }}><DateTile value={meeting.meeting_date} /><span><strong>{meeting.title}</strong><small>{meeting.agenda}</small></span><ChevronRight size={17} /></button>)}</div> : <Empty label="Meetings you save will appear here." />}{selected && <article className="detail"><p className="eyebrow">SELECTED MEETING</p><h3>{selected.title}</h3><p>{selected.raw_notes}</p><small><Users size={14} /> {selected.participants.join(', ') || 'No participants'} · {date(selected.meeting_date)}</small><button className="primary ai-button" onClick={onAnalyze} disabled={saving}>{saving ? 'Analyzing…' : 'Analyze notes with AI'}</button>{analysis && <div className="ai-review"><p className="eyebrow">REVIEW BEFORE SAVING</p><h3>AI meeting analysis</h3><p>{analysis.summary}</p><strong>Decisions</strong><ul>{analysis.decisions.length ? analysis.decisions.map((item) => <li key={item}>{item}</li>) : <li>None identified</li>}</ul><strong>Action items</strong><ul>{analysis.action_items.length ? analysis.action_items.map((item) => <li key={item.title}>{item.title} — {item.owner || 'Unassigned'}{item.due_date ? `, due ${date(item.due_date)}` : ''}</li>) : <li>None identified</li>}</ul>{analysis.blockers.length > 0 && <><strong>Blockers</strong><ul>{analysis.blockers.map((item) => <li key={item}>{item}</li>)}</ul></>}<div className="review-actions"><button className="primary" onClick={onApprove} disabled={saving}>Approve and save</button><button className="link" onClick={onDiscard}>Discard</button></div></div>}</article>}</article></section>
+function Meetings({ meetings, selected, onSelect, onSave, saving, analysis, onAnalyze, onApprove, onDiscard, onCreateKnowledge }) {
+  return <section className="content-grid meetings"><article className="panel"><PanelTitle eyebrow="CAPTURE CONTEXT" title="New meeting" /><form className="form" onSubmit={onSave}><label>Title<input name="title" required placeholder="Weekly delivery sync" /></label><div className="split"><label>Type<input name="meeting_type" required defaultValue="Meeting" /></label><label>Date<input name="meeting_date" type="date" defaultValue={today} required /></label></div><label>Agenda<textarea name="agenda" required rows="2" placeholder="What needs to be covered?" /></label><label>Participants <em>comma-separated</em><input name="participants" placeholder="Asha, Dev, Priya" /></label><label>Raw notes<textarea name="raw_notes" required rows="5" placeholder="Capture discussion, decisions and follow-ups…" /></label><button className="primary" disabled={saving}><Plus size={17} /> {saving ? 'Saving…' : 'Save meeting'}</button></form></article><article className="panel"><PanelTitle eyebrow="MEETING HISTORY" title={`All meetings · ${meetings.length}`} />{meetings.length ? <div className="list all-meetings">{meetings.map((meeting) => <button className={`meeting-row ${selected?.id === meeting.id ? 'selected' : ''}`} key={meeting.id} onClick={() => { onSelect(meeting); onDiscard() }}><DateTile value={meeting.meeting_date} /><span><strong>{meeting.title}</strong><small>{meeting.agenda}</small></span><ChevronRight size={17} /></button>)}</div> : <Empty label="Meetings you save will appear here." />}{selected && <article className="detail"><p className="eyebrow">SELECTED MEETING</p><h3>{selected.title}</h3><p>{selected.raw_notes}</p><small><Users size={14} /> {selected.participants.join(', ') || 'No participants'} · {date(selected.meeting_date)}</small><div className="meeting-actions"><button className="primary ai-button" onClick={onAnalyze} disabled={saving}>{saving ? 'Analyzing…' : 'Analyze notes with AI'}</button><button className="link" onClick={() => onCreateKnowledge(selected, analysis)}>Create knowledge draft</button></div>{analysis && <div className="ai-review"><p className="eyebrow">REVIEW BEFORE SAVING</p><h3>AI meeting analysis</h3><p>{analysis.summary}</p><strong>Decisions</strong><ul>{analysis.decisions.length ? analysis.decisions.map((item) => <li key={item}>{item}</li>) : <li>None identified</li>}</ul><strong>Action items</strong><ul>{analysis.action_items.length ? analysis.action_items.map((item) => <li key={item.title}>{item.title} — {item.owner || 'Unassigned'}{item.due_date ? `, due ${date(item.due_date)}` : ''}</li>) : <li>None identified</li>}</ul>{analysis.blockers.length > 0 && <><strong>Blockers</strong><ul>{analysis.blockers.map((item) => <li key={item}>{item}</li>)}</ul></>}{analysis && <button className="link" onClick={() => onCreateKnowledge(selected, analysis)}>Draft knowledge from AI summary</button>}<div className="review-actions"><button className="primary" onClick={onApprove} disabled={saving}>Approve and save</button><button className="link" onClick={onDiscard}>Discard</button></div></div>}</article>}</article></section>
+}
+
+function KnowledgePage({
+  articles,
+  selected,
+  draft,
+  meetings,
+  loading,
+  query,
+  category,
+  tag,
+  currentUserId,
+  signedIn,
+  authConfigured,
+  saving,
+  onQuery,
+  onCategory,
+  onTag,
+  onCreate,
+  onSelect,
+  onEdit,
+  onDelete,
+  onSave,
+  onCancel,
+  onMeeting,
+}) {
+  const relatedMeeting = selected?.related_meeting_id
+    ? meetings.find((meeting) => meeting.id === selected.related_meeting_id)
+    : null
+  const canManageSelected = selected?.creator_clerk_id === currentUserId
+
+  return <section className="knowledge-page">
+    <div className="knowledge-heading">
+      <div>
+        <p className="eyebrow">REUSABLE TEAM CONTEXT</p>
+        <h2>Knowledge library</h2>
+        <p>Capture guidance, decisions, and lessons worth reusing.</p>
+      </div>
+      <button className="primary create-knowledge" onClick={onCreate} disabled={!signedIn}>
+        <Plus size={17} /> Create knowledge
+      </button>
+    </div>
+    {!authConfigured
+      ? <div className="auth-banner">Configure Clerk to create and access private or shared knowledge articles.</div>
+      : !signedIn
+        ? <div className="knowledge-signin"><p>Sign in to browse your private articles and shared knowledge.</p><SignInButton mode="modal"><button className="light-button">Sign in</button></SignInButton></div>
+        : null}
+    {draft && signedIn && <article className="panel knowledge-editor">
+      <PanelTitle eyebrow={draft.id ? 'UPDATE ARTICLE' : 'NEW ARTICLE'} title={draft.id ? 'Edit knowledge' : 'Review and save knowledge'} />
+      <form className="form" onSubmit={onSave}>
+        <label>Title<input name="title" required maxLength={200} defaultValue={draft.title} placeholder="A useful, searchable title" /></label>
+        <div className="split">
+          <label>Category<input name="category" required maxLength={100} defaultValue={draft.category || 'General'} /></label>
+          <label>Tags <em>comma-separated</em><input name="tags" defaultValue={draft.tags} placeholder="handover, release, support" /></label>
+        </div>
+        <label>Content<textarea name="content" required rows="10" defaultValue={draft.content} placeholder="Write the reusable guidance…" /></label>
+        <div className="split">
+          <label>Visibility<select name="visibility" defaultValue={draft.visibility || 'private'}><option value="private">Private — only me</option><option value="shared">Shared — all signed-in users</option></select></label>
+          <label>Related meeting <em>optional</em>
+            <select name="related_meeting_id" defaultValue={draft.related_meeting_id || ''}>
+              <option value="">No related meeting</option>
+              {meetings.map((meeting) => <option key={meeting.id} value={meeting.id}>{meeting.title}</option>)}
+            </select>
+          </label>
+        </div>
+        <div className="knowledge-form-actions">
+          <button className="primary" disabled={saving}><CheckCircle2 size={16} /> {saving ? 'Saving…' : 'Save article'}</button>
+          <button type="button" className="link" onClick={onCancel}>Cancel</button>
+        </div>
+      </form>
+    </article>}
+    {signedIn && !draft && selected && <article className="panel knowledge-detail">
+      <div className="knowledge-detail-heading">
+        <div><p className="eyebrow">{selected.category} · {selected.visibility === 'shared' ? 'SHARED' : 'PRIVATE'}</p><h2>{selected.title}</h2></div>
+        {canManageSelected && <div className="knowledge-actions"><button className="link" onClick={() => onEdit(selected)}>Edit</button><button className="link danger-link" onClick={() => onDelete(selected)}>Delete</button></div>}
+      </div>
+      <div className="knowledge-tags">{selected.tags.map((item) => <span className="knowledge-tag" key={item}>{item}</span>)}</div>
+      <p className="knowledge-content">{selected.content}</p>
+      <div className="knowledge-meta">
+        <span>Created {new Date(selected.created_at).toLocaleString()}</span>
+        <span>Updated {new Date(selected.updated_at).toLocaleString()}</span>
+        {relatedMeeting && <button className="link" onClick={() => onMeeting(relatedMeeting.id)}>Meeting: {relatedMeeting.title}</button>}
+        {selected.related_meeting_id && !relatedMeeting && <span>Related meeting #{selected.related_meeting_id}</span>}
+      </div>
+    </article>}
+    {signedIn && !draft && <article className="panel knowledge-library">
+      <div className="knowledge-toolbar">
+        <label className="knowledge-search">Search title or content<input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search knowledge…" /></label>
+        <label>Category<input value={category} onChange={(event) => onCategory(event.target.value)} placeholder="All categories" /></label>
+        <label>Tag<input value={tag} onChange={(event) => onTag(event.target.value)} placeholder="All tags" /></label>
+      </div>
+      <div className="knowledge-list-title"><div><p className="eyebrow">LIBRARY</p><h2>Articles</h2></div><span>{articles.length} {articles.length === 1 ? 'article' : 'articles'}</span></div>
+      {loading
+        ? <div className="knowledge-loading"><LoaderCircle className="spin" /> Loading knowledge…</div>
+        : articles.length
+          ? <div className="knowledge-cards">{articles.map((article) => <button className={`knowledge-card ${selected?.id === article.id ? 'selected' : ''}`} key={article.id} onClick={() => onSelect(article)}>
+            <div className="knowledge-card-top"><span className="knowledge-category">{article.category}</span><span className={`visibility ${article.visibility}`}>{article.visibility}</span></div>
+            <h3>{article.title}</h3>
+            <p>{article.content}</p>
+            <div className="knowledge-tags">{article.tags.slice(0, 4).map((item) => <span className="knowledge-tag" key={item}>{item}</span>)}</div>
+            <small>Created {new Date(article.created_at).toLocaleDateString()} · Updated {new Date(article.updated_at).toLocaleDateString()}</small>
+          </button>)}</div>
+          : <Empty label={query || category || tag ? 'No articles match these filters.' : 'Your knowledge library is empty.'} action={<button className="link" onClick={onCreate}>Create your first article</button>} />}
+    </article>}
+  </section>
 }
 
 function Tasks({

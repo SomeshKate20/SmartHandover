@@ -1,9 +1,8 @@
 # DigiPlus — AI-Powered Knowledge & Task Management
 
 DigiPlus turns meeting information into persistent, accountable work. The
-current release provides meeting and task CRUD APIs backed by SQLite; AI
-analysis, task history, knowledge, and handover workflows are added in later
-phases.
+application provides meeting and task workflows, AI meeting analysis, and a
+searchable knowledge library backed by SQLAlchemy.
 
 ## Local development
 
@@ -64,8 +63,34 @@ remain display-only and are not treated as authenticated assignments;
 authenticated users can claim unassigned tasks. No administrator role is
 configured.
 
+### Knowledge library
+
+Knowledge articles are stored in the configured SQLAlchemy database. New
+`knowledge_articles` and `knowledge_tags` tables are created automatically at
+startup; existing meeting and task tables are not altered for this feature.
+Articles are private by default. A `shared` article is visible to every
+authenticated Clerk user, while only its creator can edit or delete it.
+There is no Clerk organization/team scope or administrator role in the current
+application, so shared visibility is application-wide rather than limited to
+a Clerk organization.
+
+All Knowledge API operations require a verified Clerk Bearer token. The
+creator identity is read from the verified token and cannot be supplied in the
+request body. Search supports title/content text, exact category, and exact
+tag filters. Related meeting IDs are checked against existing meetings.
+Meetings currently have no owner or per-user access field and their existing
+API is globally accessible; therefore Knowledge meeting links preserve that
+existing global meeting access model.
+
+The frontend Knowledge page supports create, view, edit, delete, category/tag
+filtering, and search. From a selected meeting, **Create knowledge draft**
+prefills an editable article using the current AI summary, saved summary, or
+meeting notes in that order. The article is only persisted after the user
+reviews and saves the draft.
+
 Render provides `PORT`; the start command binds Uvicorn to `0.0.0.0:$PORT`.
-Database tables are created during application startup.
+Database tables are created during application startup. `create_all()` adds
+the new Knowledge tables; it is not a general schema migration tool.
 
 SQLite is not inherently durable on a typical stateless Render filesystem:
 deploys, restarts, or instance replacement can lose data unless a persistent
@@ -93,8 +118,11 @@ requests to localhost.
 ### Verification after deployment
 
 1. Open `https://<render-service>/health` and confirm the JSON status is `ok`.
-2. Open the Render service `/docs` page and create/read a meeting and task.
-3. Open the Vercel URL and use browser developer tools to confirm API calls go
+2. Open the Render service `/docs` page and create/read a meeting, task, and
+   authenticated Knowledge article.
+3. Configure Clerk on both deployments, sign in, and verify private/shared
+   article access with two distinct test accounts.
+4. Open the Vercel URL and use browser developer tools to confirm API calls go
    to the Render origin and do not produce CORS errors.
-4. Restart the Render service and verify saved data only if a persistent disk
+5. Restart the Render service and verify saved data only if a persistent disk
    has been configured.

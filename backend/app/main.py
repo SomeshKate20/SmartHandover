@@ -14,6 +14,7 @@ from .routes import ai, knowledge, meetings, tasks
 LOCAL_CORS_ORIGINS = {"http://localhost:5173", "http://127.0.0.1:5173"}
 DEPLOYED_CORS_ORIGINS = {
     "https://smart-handover.vercel.app",
+    "https://smart-handover-fiyv0jlok-someshs-projects-93b80e84.vercel.app",
     "https://smart-handover-3a40vay71-someshs-projects-93b80e84.vercel.app",
     "https://smart-handover-c6rb91ol3-someshs-projects-93b80e84.vercel.app",
     "https://smart-handover-dgder7wvt-someshs-projects-93b80e84.vercel.app",
