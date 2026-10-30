@@ -9,6 +9,7 @@ DEPLOYED_ORIGINS = (
     "https://smart-handover-c6rb91ol3-someshs-projects-93b80e84.vercel.app",
     "https://smart-handover-dgder7wvt-someshs-projects-93b80e84.vercel.app",
 )
+UNRELATED_ORIGIN = "https://unrelated.example"
 
 
 class CorsPreflightTests(unittest.TestCase):
@@ -35,3 +36,19 @@ class CorsPreflightTests(unittest.TestCase):
                     self.assertIn("content-type", allowed_headers)
                     self.assertIn("authorization", allowed_headers)
                     self.assertNotIn("access-control-allow-credentials", response.headers)
+
+    def test_unrelated_frontend_preflight_is_rejected(self) -> None:
+        client = TestClient(app)
+        for path in ("/api/meetings", "/api/tasks"):
+            with self.subTest(path=path):
+                response = client.options(
+                    path,
+                    headers={
+                        "Origin": UNRELATED_ORIGIN,
+                        "Access-Control-Request-Method": "GET",
+                        "Access-Control-Request-Headers": "content-type",
+                    },
+                )
+
+                self.assertEqual(response.status_code, 400)
+                self.assertNotIn("access-control-allow-origin", response.headers)
