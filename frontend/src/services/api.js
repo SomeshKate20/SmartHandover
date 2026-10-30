@@ -11,9 +11,7 @@ function normalizeApiBaseUrl(value) {
 
 export const API_BASE_URL = configuredApiBaseUrl
   ? normalizeApiBaseUrl(configuredApiBaseUrl)
-  : import.meta.env.DEV
-    ? 'http://localhost:8000'
-    : ''
+  : ''
 
 /**
  * Makes a request to the configured backend. Production deployments must set
