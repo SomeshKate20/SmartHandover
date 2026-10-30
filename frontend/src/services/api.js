@@ -1,7 +1,16 @@
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
 
+function normalizeApiBaseUrl(value) {
+  const withoutTrailingSlash = value.replace(/\/$/, '')
+  // Endpoint paths in this client start with /api, so accept either a service
+  // origin or a mistakenly supplied origin/api without duplicating the prefix.
+  return withoutTrailingSlash.endsWith('/api')
+    ? withoutTrailingSlash.slice(0, -4)
+    : withoutTrailingSlash
+}
+
 export const API_BASE_URL = configuredApiBaseUrl
-  ? configuredApiBaseUrl.replace(/\/$/, '')
+  ? normalizeApiBaseUrl(configuredApiBaseUrl)
   : import.meta.env.DEV
     ? 'http://localhost:8000'
     : ''
