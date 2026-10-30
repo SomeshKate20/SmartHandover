@@ -3,8 +3,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Meeting, Task
-from ..schemas import TaskCreate, TaskResponse, TaskStatus, TaskUpdate
+from ..models import Meeting, MeetingTask, Task, TaskHistory
+from ..schemas import CarryForwardRequest, TaskCreate, TaskHistoryResponse, TaskResponse, TaskStatus, TaskUpdate
 
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -20,6 +20,10 @@ def get_task_or_404(task_id: int, db: Session) -> Task:
 def validate_origin_meeting(meeting_id: int | None, db: Session) -> None:
     if meeting_id is not None and db.get(Meeting, meeting_id) is None:
         raise HTTPException(status_code=422, detail="Origin meeting not found")
+
+
+def record_history(db: Session, task_id: int, event_type: str, details: str) -> None:
+    db.add(TaskHistory(task_id=task_id, event_type=event_type, details=details))
 
 
 @router.get("", response_model=list[TaskResponse])
@@ -41,6 +45,12 @@ def create_task(payload: TaskCreate, db: Session = Depends(get_db)) -> Task:
     if task.owner:
         task.owner = task.owner.strip() or None
     db.add(task)
+    db.flush()
+    record_history(db, task.id, "task_created", "Task created")
+    if task.owner:
+        record_history(db, task.id, "owner_assigned", f"Owner assigned: {task.owner}")
+    if task.origin_meeting_id:
+        db.add(MeetingTask(meeting_id=task.origin_meeting_id, task_id=task.id))
     db.commit()
     db.refresh(task)
     return task
@@ -57,10 +67,40 @@ def update_task(task_id: int, payload: TaskUpdate, db: Session = Depends(get_db)
     changes = payload.model_dump(exclude_unset=True)
     if "origin_meeting_id" in changes:
         validate_origin_meeting(changes["origin_meeting_id"], db)
+    previous_owner, previous_status = task.owner, task.status
     for field, value in changes.items():
         if isinstance(value, str):
             value = value.strip() or None
         setattr(task, field, value)
+    if "owner" in changes and task.owner != previous_owner:
+        record_history(db, task.id, "owner_assigned" if not previous_owner else "owner_changed", f"Owner changed from {previous_owner or 'unassigned'} to {task.owner or 'unassigned'}")
+    if "status" in changes and task.status != previous_status:
+        record_history(db, task.id, "status_changed", f"Status changed from {previous_status} to {task.status}")
+    if "completion_note" in changes and task.completion_note:
+        record_history(db, task.id, "completion_outcome_recorded", "Completion outcome recorded")
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+@router.get("/{task_id}/history", response_model=list[TaskHistoryResponse])
+def task_history(task_id: int, db: Session = Depends(get_db)) -> list[TaskHistory]:
+    get_task_or_404(task_id, db)
+    return list(db.scalars(select(TaskHistory).where(TaskHistory.task_id == task_id).order_by(TaskHistory.created_at.desc(), TaskHistory.id.desc())).all())
+
+
+@router.post("/{task_id}/carry-forward", response_model=TaskResponse)
+def carry_forward(task_id: int, payload: CarryForwardRequest, db: Session = Depends(get_db)) -> Task:
+    task = get_task_or_404(task_id, db)
+    if task.status == "Completed":
+        raise HTTPException(status_code=422, detail="Completed tasks cannot be carried forward")
+    if db.get(Meeting, payload.meeting_id) is None:
+        raise HTTPException(status_code=404, detail="Target meeting not found")
+    existing = db.scalar(select(MeetingTask).where(MeetingTask.task_id == task_id, MeetingTask.meeting_id == payload.meeting_id))
+    if existing:
+        raise HTTPException(status_code=409, detail="Task is already associated with this meeting")
+    db.add(MeetingTask(task_id=task_id, meeting_id=payload.meeting_id))
+    record_history(db, task.id, "task_carried_forward", f"Carried forward to meeting #{payload.meeting_id}")
     db.commit()
     db.refresh(task)
     return task

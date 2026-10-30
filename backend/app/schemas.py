@@ -92,6 +92,19 @@ class TaskResponse(BaseModel):
     updated_at: datetime
 
 
+class TaskHistoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    task_id: int
+    event_type: str
+    details: str
+    created_at: datetime
+
+
+class CarryForwardRequest(BaseModel):
+    meeting_id: int
+
+
 class NotesProcessRequest(BaseModel):
     raw_notes: str = Field(min_length=1)
     meeting_date: date | None = None

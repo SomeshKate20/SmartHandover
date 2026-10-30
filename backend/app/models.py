@@ -1,7 +1,7 @@
 import json
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import Date, DateTime, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -48,3 +48,26 @@ class Task(Base):
     )
 
     origin_meeting: Mapped[Meeting | None] = relationship(back_populates="tasks")
+    history: Mapped[list["TaskHistory"]] = relationship(back_populates="task", cascade="all, delete-orphan")
+
+
+class MeetingTask(Base):
+    __tablename__ = "meeting_tasks"
+    __table_args__ = (UniqueConstraint("meeting_id", "task_id", name="uq_meeting_task"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    meeting_id: Mapped[int] = mapped_column(ForeignKey("meetings.id"), nullable=False)
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class TaskHistory(Base):
+    __tablename__ = "task_history"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(60), nullable=False)
+    details: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    task: Mapped[Task] = relationship(back_populates="history")
